@@ -1,0 +1,178 @@
+'use client';
+
+import { useEffect, useState, useCallback } from 'react';
+import { signOut, fetchUserAttributes } from 'aws-amplify/auth';
+import useWebSocket from 'react-use-websocket';
+import { ConversationList } from '@/components/ConversationList';
+import { ChatWindow } from '@/components/ChatWindow';
+import api from '@/api';
+
+// Tipos de datos que usaremos en este componente
+interface Message {
+  sender: 'BOT' | 'CUSTOMER' | 'AGENT';
+  content: string;
+  timestamp: string;
+  conversationId: string;
+}
+
+interface Conversation {
+  conversationId: string;
+}
+
+export default function DashboardPage() {
+  // Estados del componente
+  const [email, setEmail] = useState('');
+  const [tenantId, setTenantId] = useState<string | null>(null);
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Lógica de WebSocket: se conecta solo si tenemos un tenantId
+  const websocketUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL || null;
+  const { lastJsonMessage } = useWebSocket(tenantId ? websocketUrl : null, {
+    queryParams: { tenantId: tenantId || '' },
+    onOpen: () => console.log('[FRONTEND] WebSocket Conectado!'),
+    shouldReconnect: (closeEvent) => true,
+  });
+
+  // Función para cargar/refrescar la lista de conversaciones
+  const fetchConversations = useCallback(async () => {
+    try {
+      const response = await api.get('/conversations');
+      setConversations(response.data);
+    } catch (error) {
+      console.error("Error al cargar las conversaciones:", error);
+    }
+  }, []);
+
+  // Efecto que se ejecuta cuando llega un nuevo mensaje por WebSocket
+  useEffect(() => {
+    if (lastJsonMessage) {
+      const newMessage = lastJsonMessage as Message;
+      
+      console.log('[FRONTEND] Nuevo mensaje recibido, actualizando UI...');
+      // Vuelve a cargar la lista de conversaciones para que se vea el cambio
+      fetchConversations();
+      
+      // Si el mensaje es de la conversación activa, lo añade a la ventana de chat
+      if (newMessage.conversationId === selectedConversationId) {
+        setMessages(prevMessages => [...prevMessages, newMessage]);
+      }
+    }
+  }, [lastJsonMessage, selectedConversationId, fetchConversations]);
+  
+  // Efecto que se ejecuta una sola vez para cargar los datos iniciales
+  useEffect(() => {
+    const fetchInitialData = async () => {
+      try {
+        const attributes = await fetchUserAttributes();
+        setEmail(attributes.email || '');
+        setTenantId(attributes.sub || ''); // El 'sub' es nuestro tenantId
+        
+        await fetchConversations();
+        
+      } catch (error) {
+        // Si hay error (ej. no hay sesión), redirige al login
+        window.location.href = '/login';
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchInitialData();
+  }, [fetchConversations]);
+
+  // Efecto que se ejecuta cada vez que se selecciona una conversación diferente
+  useEffect(() => {
+    if (!selectedConversationId) {
+      setMessages([]);
+      return;
+    };
+    const fetchMessages = async () => {
+      try {
+        const response = await api.get(`/conversations/${selectedConversationId}`);
+        setMessages(response.data);
+      } catch (error) {
+        console.error('Error fetching messages:', error);
+      }
+    };
+    fetchMessages();
+  }, [selectedConversationId]);
+
+  // --- NUEVA FUNCIÓN ---
+  // Se ejecuta cuando el agente envía un mensaje desde el componente ChatWindow
+  const handleSendMessage = async (content: string) => {
+    if (!selectedConversationId) return;
+
+    // 1. Actualización Optimista: Creamos el mensaje del agente y lo
+    //    añadimos al estado local de 'messages' al instante.
+    //    Esto hace que la UI se sienta súper rápida.
+    const agentMessage: Message = {
+      conversationId: selectedConversationId,
+      timestamp: new Date().toISOString(),
+      sender: 'AGENT',
+      content,
+    };
+    setMessages(prev => [...prev, agentMessage]);
+
+    try {
+      // 2. Llamada a la API: Enviamos el mensaje al backend para que
+      //    lo guarde, lo envíe por WhatsApp y lo retransmita.
+      await api.post(`/conversations/${selectedConversationId}/send`, { content });
+      console.log(`[FRONTEND] Mensaje enviado exitosamente a la conversación ${selectedConversationId}`);
+    } catch (error) {
+      console.error('Error al enviar el mensaje:', error);
+      // Opcional: Aquí podrías implementar una lógica para marcar el mensaje
+      // como "no enviado" en la UI si la llamada a la API falla.
+    }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      window.location.href = '/login';
+    } catch (error) {
+      console.error('Error signing out: ', error);
+    }
+  };
+
+  if (isLoading) {
+    return <div className="p-8 text-center">Cargando sesión...</div>;
+  }
+
+  return (
+    <div className="h-screen flex flex-col">
+      <header className="flex justify-between items-center p-4 bg-white border-b border-gray-300 shadow-sm">
+        <h1 className="text-xl font-bold">CliVet Dashboard</h1>
+        <div>
+          <span>{email}</span>
+          <button
+            onClick={handleSignOut}
+            className="ml-4 bg-red-500 text-white py-1 px-3 rounded-md text-sm hover:bg-red-600"
+          >
+            Cerrar Sesión
+          </button>
+        </div>
+      </header>
+      
+      <main className="grid grid-cols-4 flex-grow overflow-hidden">
+        <div className="col-span-1 bg-white border-r border-gray-200 overflow-y-auto">
+          <ConversationList 
+            conversations={conversations}
+            onConversationSelect={setSelectedConversationId} 
+          />
+        </div>
+        <div className="col-span-3 bg-gray-50 flex flex-col">
+          {/* --- CAMBIO CLAVE --- */}
+          {/* Ahora pasamos la nueva función 'handleSendMessage' al componente ChatWindow. */}
+          {/* Solo se la pasamos si hay una conversación seleccionada, para que el input solo aparezca en ese caso. */}
+          <ChatWindow 
+            messages={messages} 
+            onSendMessage={selectedConversationId ? handleSendMessage : undefined}
+          />
+        </div>
+      </main>
+    </div>
+  );
+}
+

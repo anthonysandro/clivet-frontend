@@ -1,0 +1,148 @@
+'use client';
+
+import { useEffect, useState, useCallback } from 'react';
+import { signOut, fetchUserAttributes } from 'aws-amplify/auth';
+import useWebSocket from 'react-use-websocket';
+import { ConversationList } from '@/components/ConversationList';
+import { ChatWindow } from '@/components/ChatWindow';
+import api from '@/api';
+
+// Tipos de datos (sin cambios)
+interface Message {
+  sender: 'BOT' | 'CUSTOMER' | 'AGENT';
+  content: string;
+  timestamp: string;
+  conversationId: string;
+}
+
+interface Conversation {
+  conversationId: string;
+}
+
+export default function DashboardPage() {
+  const [email, setEmail] = useState('');
+  const [tenantId, setTenantId] = useState<string | null>(null); // Permitir que sea null inicialmente
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // --- LÓGICA DE WEBSOCKET CORREGIDA ---
+  // Se extrae la URL de las variables de entorno
+  const websocketUrl = process.env.NEXT_PUBLIC_WEBSOCKET_URL;
+  const { lastJsonMessage } = useWebSocket(websocketUrl || null, {
+    queryParams: { tenantId: tenantId || '' },
+    onOpen: () => console.log('[FRONTEND] WebSocket Conectado!'),
+    shouldReconnect: (closeEvent) => true,
+    // La conexión solo se intentará si tenemos una URL y un tenantId
+    retryOnError: true,
+  });
+
+  // --- LÓGICA DE CARGA DE DATOS MEJORADA ---
+  // Se extrae la lógica de carga de conversaciones a una función reutilizable
+  const fetchConversations = useCallback(async () => {
+    try {
+      const response = await api.get('/conversations');
+      setConversations(response.data);
+    } catch (error) {
+      console.error("Error al cargar las conversaciones:", error);
+    }
+  }, []);
+
+  // Efecto para manejar los nuevos mensajes que llegan del WebSocket
+  useEffect(() => {
+    if (lastJsonMessage) {
+      const newMessage = lastJsonMessage as Message;
+      
+      // --- CAMBIO CLAVE ---
+      // Vuelve a cargar la lista de conversaciones para reflejar el nuevo mensaje.
+      // Esto asegura que el chat más reciente suba a la parte superior de la lista.
+      fetchConversations();
+      
+      // Si el mensaje pertenece a la conversación abierta, lo añadimos a la ventana de chat
+      if (newMessage.conversationId === selectedConversationId) {
+        setMessages(prevMessages => [...prevMessages, newMessage]);
+      }
+    }
+  }, [lastJsonMessage, selectedConversationId, fetchConversations]);
+  
+  // Efecto para la carga de datos inicial (sin cambios mayores)
+  useEffect(() => {
+    const fetchInitialData = async () => {
+      try {
+        const attributes = await fetchUserAttributes();
+        setEmail(attributes.email || '');
+        setTenantId(attributes.sub || '');
+        
+        await fetchConversations();
+        
+      } catch (error) {
+        window.location.href = '/login';
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchInitialData();
+  }, [fetchConversations]);
+
+  // Efecto para cargar los mensajes de un chat seleccionado (sin cambios)
+  useEffect(() => {
+    if (!selectedConversationId) {
+      setMessages([]);
+      return;
+    };
+    const fetchMessages = async () => {
+      try {
+        const response = await api.get(`/conversations/${selectedConversationId}`);
+        setMessages(response.data);
+      } catch (error) {
+        console.error('Error fetching messages:', error);
+      }
+    };
+    fetchMessages();
+  }, [selectedConversationId]);
+
+  // Lógica para cerrar sesión (sin cambios)
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      window.location.href = '/login';
+    } catch (error) {
+      console.error('Error signing out: ', error);
+    }
+  };
+
+  if (isLoading) {
+    return <div className="p-8 text-center">Cargando sesión...</div>;
+  }
+
+  // Renderizado del componente (sin cambios)
+  return (
+    <div className="h-screen flex flex-col">
+      <header className="flex justify-between items-center p-4 bg-white border-b border-gray-300 shadow-sm">
+        <h1 className="text-xl font-bold">CliVet Dashboard</h1>
+        <div>
+          <span>{email}</span>
+          <button
+            onClick={handleSignOut}
+            className="ml-4 bg-red-500 text-white py-1 px-3 rounded-md text-sm hover:bg-red-600"
+          >
+            Cerrar Sesión
+          </button>
+        </div>
+      </header>
+      
+      <main className="grid grid-cols-4 flex-grow overflow-hidden">
+        <div className="col-span-1 bg-white overflow-y-auto">
+          <ConversationList 
+            conversations={conversations}
+            onConversationSelect={setSelectedConversationId} 
+          />
+        </div>
+        <div className="col-span-3">
+          <ChatWindow messages={messages} />
+        </div>
+      </main>
+    </div>
+  );
+}

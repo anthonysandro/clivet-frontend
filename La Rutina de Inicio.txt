@@ -1,0 +1,47 @@
+## La Rutina de Inicio Actualizada
+Ahora, para trabajar, necesitarás tres terminales corriendo:
+
+Terminal 1 (Base de Datos): docker run ...
+
+Terminal 2 (Backend API): En el proyecto ServerlessSaaSCliVet, ejecuta npm run dev. Ahora correrá en http://localhost:3001.
+
+Terminal 3 (Frontend App): En el proyecto clivet-frontend, ejecuta npm run dev. Correrá en http://localhost:3000.
+
+cd C:\Project\clivet-frontend
+Remove-Item -Recurse -Force .next
+npm run dev
+
+User pool ID
+us-east-1_3QjhHQi7N
+
+Client ID
+4ptkvuhenk090i143mssiaghqu
+
+anthonysandro@hotmail.com
+Libre1976@
+
+Libre2025@
+
+serverless deploy function --function getConversationMessages --config serverless.aws.yml --stage dev
+3.  **Prueba de nuevo:** Refresca tu navegador.
+
+User ID (Sub)
+e428e4f8-3081-70a4-f126-c117daf2dae5
+
+Meta: Identificador del número de teléfono: 715372184983039
+
+{
+  "PK": "TENANT#e428e4f8-3081-70a4-f126-c117daf2dae5",
+  "SK": "METADATA",
+  "GSI1PK": "META_PHONE_ID#715372184983039",
+  "GSI1SK": "TENANT#e428e4f8-3081-70a4-f126-c117daf2dae5",
+  "tenantId": "e428e4f8-3081-70a4-f126-c117daf2dae5",
+  "metaPhoneNumberId": "715372184983039",
+  "name": "Clinica Veterinaria Acevedo"
+}
+
+vet-service-backend-dev-getConversations
+
+PS C:\Windows\system32> serverless --version
+
+Serverless ϟ Framework 4.20.2

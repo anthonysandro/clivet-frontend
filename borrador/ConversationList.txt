@@ -1,0 +1,33 @@
+'use client';
+
+interface Conversation {
+  conversationId: string;
+}
+
+interface ConversationListProps {
+  conversations: Conversation[];
+  onConversationSelect: (id: string) => void;
+}
+
+export function ConversationList({ conversations, onConversationSelect }: ConversationListProps) {
+  return (
+    <div className="border-r border-gray-300 h-full">
+      <h2 className="p-4 font-bold text-lg border-b border-gray-300">Chats</h2>
+      <ul>
+        {conversations.length > 0 ? (
+          conversations.map((conv) => (
+            <li 
+              key={conv.conversationId} 
+              className="p-4 border-b border-gray-200 hover:bg-gray-100 cursor-pointer"
+              onClick={() => onConversationSelect(conv.conversationId)}
+            >
+              {conv.conversationId}
+            </li>
+          ))
+        ) : (
+          <li className="p-4 text-gray-500">No hay conversaciones.</li>
+        )}
+      </ul>
+    </div>
+  );
+}
