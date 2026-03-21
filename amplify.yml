@@ -6,12 +6,11 @@ frontend:
         - npm ci --force
     build:
       commands:
-        - npm run build
+        - npm run export # Usamos el nuevo comando
   artifacts:
-    baseDirectory: out # Aquí es donde está el truco
+    baseDirectory: out
     files:
       - '**/*'
   cache:
     paths:
       - node_modules/**/*
-      - .next/cache/**/*
