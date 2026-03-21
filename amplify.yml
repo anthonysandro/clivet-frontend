@@ -1,0 +1,17 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm ci --force
+    build:
+      commands:
+        - npm run build
+  artifacts:
+    baseDirectory: out # Aquí es donde está el truco
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - node_modules/**/*
+      - .next/cache/**/*
