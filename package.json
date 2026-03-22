@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "export": "next build",
+    "amplify-export": "next build", 
     "start": "next start",
     "lint": "eslint"
   },
