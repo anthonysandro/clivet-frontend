@@ -6,7 +6,7 @@ frontend:
         - npm ci --force
     build:
       commands:
-        - npm run export # Usamos el nuevo comando
+        - npm run amplify-export
   artifacts:
     baseDirectory: out
     files:
