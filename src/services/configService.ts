@@ -16,15 +16,14 @@ export interface ServiceCategory {
     isActive?: boolean;
 }
 
-// ✅ Actualizado para coincidir con Auth.ts del Backend
 export interface UserProfile {
-    profileId?: string;
+    profileId: string;
     name: string;
-    description?: string; // 👈 Agregado
+    description?: string;
     isActive: boolean;
-    aiRoleBase: 'admin' | 'groomer' | 'counter' | 'customer'; // 👈 VITAL PARA IA
+    aiRoleBase: 'admin' | 'groomer' | 'counter' | 'customer';
     menuOptions?: string[]; 
-    permissions?: string[]; // 👈 Recomendado para granularidad
+    permissions?: string[];
 }
 
 export interface MenuOption {
@@ -34,6 +33,17 @@ export interface MenuOption {
     path: string;
     order: number;
     isActive: boolean;
+}
+
+// ✅ Nueva Interfaz de Sede sincronizada con el backend
+export interface Branch {
+    branchId: string;
+    name: string;
+    address: string;
+    phone: string;
+    isActive: boolean;
+    createdAt?: string;
+    updatedAt?: string;
 }
 
 // --- SERVICIO ---
@@ -51,7 +61,7 @@ export const ConfigService = {
     },
 
     updateServiceType: async (id: string, data: Partial<ServiceType>) => {
-        const response = await api.put<ServiceType>(`/config/service-types/${id}`, data);
+        const response = await api.patch<ServiceType>(`/config/service-types/${id}`, data);
         return response.data;
     },
 
@@ -70,7 +80,7 @@ export const ConfigService = {
     },
 
     updateCategory: async (id: string, data: Partial<ServiceCategory>) => {
-        const response = await api.put<ServiceCategory>(`/config/categories/${id}`, data);
+        const response = await api.patch<ServiceCategory>(`/config/categories/${id}`, data);
         return response.data;
     },
 
@@ -85,14 +95,13 @@ export const ConfigService = {
         return response.data;
     },
 
-    // ✅ Ahora enviará el aiRoleBase al backend
     createProfile: async (data: Partial<UserProfile>) => {
         const response = await api.post<UserProfile>('/config/profiles', data);
         return response.data;
     },
 
     updateProfile: async (id: string, data: Partial<UserProfile>) => {
-        const response = await api.put<UserProfile>(`/config/profiles/${id}`, data);
+        const response = await api.patch<UserProfile>(`/config/profiles/${id}`, data);
         return response.data;
     },
 
@@ -108,23 +117,46 @@ export const ConfigService = {
     },
 
     updateMenuOption: async (id: string, data: Partial<MenuOption>) => {
-        const response = await api.put<MenuOption>(`/config/menus/${id}`, data);
+        const response = await api.patch<MenuOption>(`/config/menus/${id}`, data);
         return response.data;
     },
 
-    // --- 🗑️ ELIMINACIÓN ---
-    deleteServiceType: async (id: string) => {
-        const response = await api.delete(`/config/service-types/${id}`);
+    // --- 📍 MANTENIMIENTO DE SEDES (BRANCHES) ---
+    // ✅ Agregado para centralizar la configuración de locales
+    getBranches: async (): Promise<Branch[]> => {
+        const response = await api.get('/branches');
+        return Array.isArray(response.data) ? response.data : (response.data.branches || []);
+    },
+
+    getBranchById: async (id: string): Promise<Branch> => {
+        const response = await api.get(`/branches/${id}`);
         return response.data;
+    },
+
+    createBranch: async (data: Partial<Branch>): Promise<Branch> => {
+        const response = await api.post('/branches', data);
+        return response.data;
+    },
+
+    updateBranch: async (id: string, data: Partial<Branch>): Promise<Branch> => {
+        const response = await api.patch(`/branches/${id}`, data);
+        return response.data;
+    },
+
+    // --- 🗑️ ELIMINACIÓN / DESACTIVACIÓN ---
+    deleteServiceType: async (id: string) => {
+        return (await api.delete(`/config/service-types/${id}`)).data;
     },
     
     deleteCategory: async (id: string) => {
-        const response = await api.delete(`/config/categories/${id}`);
-        return response.data;
+        return (await api.delete(`/config/categories/${id}`)).data;
     },
 
     deleteMenuOption: async (id: string) => {
-        const response = await api.delete(`/config/menus/${id}`);
-        return response.data;
+        return (await api.delete(`/config/menus/${id}`)).data;
+    },
+
+    deleteBranch: async (id: string) => {
+        return (await api.delete(`/branches/${id}`)).data;
     }
 };

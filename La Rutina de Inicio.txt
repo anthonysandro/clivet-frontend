@@ -10,7 +10,49 @@ Terminal 3 (Frontend App): En el proyecto clivet-frontend, ejecuta npm run dev. 
 cd C:\Project\clivet-frontend
 Remove-Item -Recurse -Force .next
 npm run dev
+============================================================================================================
+subir cambios a GitHub
+============================================================================================================
+git add .
+git commit -m "descripción del cambio"
+git push origin main
+============================================================================================================
+subir proyecto a GitHub
+============================================================================================================
+Copia y pega este comando exacto (ya le puse tu usuario):
 
+PowerShell
+git remote add origin https://github.com/anthonysandro/clivet-frontend.git
+Subir tu proyecto:
+
+PowerShell
+git push -u origin main
+============================================================================================================
+aws amplify update-app --app-id d10td5u636qv5j --platform WEB  // cambiar ls plataforma a estática:
+NEXT_PUBLIC_API_URL       = https://rtqtc0j220.execute-api.us-east-1.amazonaws.com
+NEXT_PUBLIC_WEBSOCKET_URL = wss://3zboz5e9aa.execute-api.us-east-1.amazonaws.com/dev
+NEXT_PUBLIC_TENANT_ID     = d4d8d4e8-2001-70c7-5aa7-2cbe2056dbeb
+============================================================================================================
+botón Edit YML file:
+
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm ci --force
+    build:
+      commands:
+        - npm run amplify-build
+  artifacts:
+    baseDirectory: out
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - node_modules/**/*
+
+============================================================================================================
 User pool ID
 us-east-1_3QjhHQi7N
 

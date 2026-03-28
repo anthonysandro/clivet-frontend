@@ -1,414 +1,270 @@
-// src/app/dashboard/caja/page.tsx
-//
-// Pantalla de caja — solo Counter y Admin
-// Muestra servicios completados pendientes de cobro
-// Permite agrupar en una orden y cobrar con pago mixto
-
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
 import {
   ShoppingCart, Plus, Search, Loader2, Receipt,
   CheckCircle2, XCircle, Banknote, CreditCard,
-  Smartphone, MapPin, Clock, User, PawPrint,
+  Smartphone, MapPin, Clock, User, PawPrint, FilterX
 } from 'lucide-react';
 import { fetchAuthSession, fetchUserAttributes } from 'aws-amplify/auth';
 import { serviceRequestService } from '@/services/serviceRequestService';
 import { saleOrderService, SaleOrder, OrderItem, CreateOrderDTO } from '@/services/saleOrderService';
+import { BranchService, Branch } from '@/services/branchService';
 import PaymentModal from '@/components/PaymentModal';
 
-// ── Config de método de pago ──────────────────────────────────────────
 const METHOD_ICON: Record<string, React.ReactNode> = {
-  EFECTIVO: <Banknote   size={14} />,
-  TARJETA:  <CreditCard size={14} />,
-  YAPE:     <Smartphone size={14} />,
+  EFECTIVO: <Banknote size={14} />,
+  TARJETA: <CreditCard size={14} />,
+  YAPE: <Smartphone size={14} />,
+  TRANSFERENCIA: <Receipt size={14} />,
 };
 
-// ── Estado → color ────────────────────────────────────────────────────
 const ORDER_STATUS_STYLE: Record<string, string> = {
-  PENDIENTE: 'bg-amber-100 text-amber-700',
-  PAGADO:    'bg-green-100 text-green-700',
-  ANULADO:   'bg-gray-100 text-gray-500',
+  PENDIENTE: 'bg-amber-50 text-amber-600 border-amber-100',
+  PAGADO: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+  ANULADO: 'bg-gray-50 text-gray-400 border-gray-100',
 };
 
 export default function CajaPage() {
+  const [authData, setAuthData] = useState<{ tenantId: string; role: string; branchId: string } | null>(null);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState('');
+  const [dateFilter, setDateFilter] = useState(() => new Date().toISOString().split('T')[0]);
+  const [tab, setTab] = useState<'pendientes' | 'ordenes'>('pendientes');
 
-  const [authData,    setAuthData]    = useState<{ tenantId: string; token: string; role: string; branchId: string } | null>(null);
-  const [dateFilter,  setDateFilter]  = useState(() => new Date().toISOString().split('T')[0]);
-  const [tab,         setTab]         = useState<'pendientes' | 'ordenes'>('pendientes');
+  const [completed, setCompleted] = useState<any[]>([]);
+  const [orders, setOrders] = useState<SaleOrder[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [docType, setDocType] = useState<'BOLETA' | 'FACTURA' | 'NOTA_VENTA'>('NOTA_VENTA');
 
-  // Servicios completados sin cobrar
-  const [completed,   setCompleted]   = useState<any[]>([]);
-  // Órdenes del día
-  const [orders,      setOrders]      = useState<SaleOrder[]>([]);
-  const [loading,     setLoading]     = useState(false);
+  const [payModal, setPayModal] = useState<{ open: boolean; order: SaleOrder | null }>({ open: false, order: null });
 
-  // Selección para nueva orden
-  const [selected,    setSelected]    = useState<Set<string>>(new Set());
-  const [docType,     setDocType]     = useState<'BOLETA' | 'FACTURA'>('BOLETA');
-
-  // Modal de pago
-  const [payModal,    setPayModal]    = useState<{ open: boolean; order: SaleOrder | null }>({ open: false, order: null });
-
-  // ── Auth ──────────────────────────────────────────────────────────
-  const loadAuth = useCallback(async () => {
+  const loadAuthAndSedes = useCallback(async () => {
     try {
-      const session    = await fetchAuthSession();
       const attributes = await fetchUserAttributes();
-      const token      = session.tokens?.idToken?.toString() || '';
-      const tenantId   = (attributes['custom:tenantId'] as string) || '';
-      const role       = ((attributes['custom:role'] as string) || 'counter').toLowerCase();
-      const branchId   = (attributes['custom:branchId'] as string) || '';
-      setAuthData({ tenantId, token, role, branchId });
-      return { tenantId, token, role, branchId };
-    } catch { return null; }
+      const role = ((attributes['custom:role'] as string) || 'counter').toLowerCase();
+      const branchId = (attributes['custom:branchId'] as string) || '';
+      
+      setAuthData({ tenantId: attributes['custom:tenantId'] as string, role, branchId });
+      setSelectedBranch(branchId);
+
+      const branchList = await BranchService.getAll();
+      setBranches(branchList.filter(b => b.isActive));
+    } catch (e) { console.error(e); }
   }, []);
 
-  // ── Cargar datos ──────────────────────────────────────────────────
   const loadData = useCallback(async () => {
-    let auth = authData;
-    if (!auth) auth = await loadAuth();
-    if (!auth) return;
-
+    if (!selectedBranch) return;
     setLoading(true);
     try {
       const [completedData, ordersData] = await Promise.all([
-        // Servicios completados del día sin orden asignada
-        serviceRequestService.search({ date: dateFilter, status: 'COMPLETADO' }),
-        // Órdenes del día
-        auth.branchId ? saleOrderService.list(auth.branchId, dateFilter) : Promise.resolve([]),
+        serviceRequestService.search({ branchId: selectedBranch, date: dateFilter, status: 'COMPLETED' }),
+        saleOrderService.list({ branchId: selectedBranch, date: dateFilter })
       ]);
-
-      // Filtrar completados que no tienen orden aún
-      const orderedRequestIds = new Set(
-        ordersData.flatMap((o: SaleOrder) => o.items.map(i => i.requestId).filter(Boolean))
-      );
-      setCompleted(completedData.filter((r: any) => !orderedRequestIds.has(r.requestId)));
+      setCompleted(completedData);
       setOrders(ordersData);
     } catch (err) {
-      console.error('Error al cargar datos de caja:', err);
+      console.error(err);
     } finally {
       setLoading(false);
     }
-  }, [authData, dateFilter, loadAuth]);
+  }, [selectedBranch, dateFilter]);
 
+  useEffect(() => { loadAuthAndSedes(); }, [loadAuthAndSedes]);
   useEffect(() => { loadData(); }, [loadData]);
 
-  // ── Selección de servicios ────────────────────────────────────────
   const toggleSelect = (requestId: string) => {
     setSelected(prev => {
       const next = new Set(prev);
-      next.has(requestId) ? next.delete(requestId) : next.add(requestId);
+      if (next.has(requestId)) next.delete(requestId);
+      else {
+        const item = completed.find(r => r.requestId === requestId);
+        const firstSelected = completed.find(r => prev.has(r.requestId));
+        if (firstSelected && item.clientId !== firstSelected.clientId) {
+          alert("Solo puedes agrupar servicios del mismo cliente.");
+          return prev;
+        }
+        next.add(requestId);
+      }
       return next;
     });
   };
 
-  // ── Crear orden con servicios seleccionados ───────────────────────
   const handleCreateOrder = async () => {
     if (selected.size === 0 || !authData) return;
-
     const selectedRequests = completed.filter(r => selected.has(r.requestId));
-    if (selectedRequests.length === 0) return;
-
-    // Todos deben ser del mismo cliente
-    const clientIds = new Set(selectedRequests.map((r: any) => r.clientId));
-    if (clientIds.size > 1) {
-      alert('Solo puedes agrupar servicios del mismo cliente en una orden.');
-      return;
-    }
-
     const first = selectedRequests[0];
-    const items: Omit<OrderItem, 'subtotal'>[] = selectedRequests.flatMap((r: any) =>
+    const branch = branches.find(b => b.branchId === selectedBranch);
+
+    const items = selectedRequests.flatMap((r: any) =>
       (r.items || []).map((item: any) => ({
-        requestId:   r.requestId,
-        description: item.productName || item.description || 'Servicio',
-        memberName:  item.memberName || item.petName,
-        quantity:    1,
-        unitPrice:   item.price || r.total || 0,
-        discount:    item.discount || 0,
+        requestId: r.requestId,
+        description: item.description,
+        memberName: item.petName,
+        quantity: 1,
+        unitPrice: item.price,
+        discount: item.discount || 0,
       }))
     );
 
     try {
-      const dto: CreateOrderDTO = {
-        branchId:     authData.branchId || first.branchId || '',
-        branchName:   first.branchName || '',
-        clientId:     first.clientId,
-        clientName:   first.clientName,
-        clientPhone:  first.clientPhone || '',
-        documentType: docType,
-        items,
-      };
-      const order = await saleOrderService.create(dto);
+      const order = await saleOrderService.create({
+        branchId: selectedBranch,
+        branchName: branch?.name || '',
+        clientId: first.clientId,
+        clientName: first.clientName,
+        clientPhone: first.clientPhone,
+        documentType: docType as any,
+        items
+      });
       setSelected(new Set());
       setPayModal({ open: true, order });
       loadData();
-    } catch (err: any) {
-      alert(err.response?.data?.message || 'Error al crear la orden');
-    }
+    } catch (err) { alert("Error al crear la orden."); }
   };
 
-  // ── Resumen del día ───────────────────────────────────────────────
-  const dayTotals = orders
-    .filter(o => o.status === 'PAGADO')
-    .reduce((acc, o) => {
-      o.payments.forEach(p => {
-        if (p.method === 'EFECTIVO') acc.efectivo += p.amount;
-        if (p.method === 'TARJETA')  acc.tarjeta  += p.amount;
-        if (p.method === 'YAPE')     acc.yape     += p.amount;
-      });
-      return acc;
-    }, { efectivo: 0, tarjeta: 0, yape: 0 });
+  const dayTotals = orders.filter(o => o.status === 'PAGADO').reduce((acc, o) => {
+    o.payments?.forEach(p => {
+      const m = p.method.toLowerCase();
+      if (acc[m] !== undefined) acc[m] += p.amount;
+    });
+    return acc;
+  }, { efectivo: 0, tarjeta: 0, yape: 0, transferencia: 0 } as any);
 
-  const totalDay = dayTotals.efectivo + dayTotals.tarjeta + dayTotals.yape;
+  const totalDay = Object.values(dayTotals).reduce((a: any, b: any) => a + b, 0) as number;
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-
-      {/* Header */}
-      <div className="flex justify-between items-center mb-6">
-        <div className="text-left">
-          <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
-            <ShoppingCart size={26} className="text-indigo-600" /> Caja
+    <div className="p-8 bg-gray-50 min-h-screen text-left">
+      <header className="flex justify-between items-end mb-8">
+        <div>
+          <h1 className="text-3xl font-black text-gray-900 uppercase tracking-tighter flex items-center gap-3">
+            <ShoppingCart className="text-indigo-600" size={32} /> Terminal de Caja
           </h1>
-          <p className="text-sm text-gray-500 mt-1">Cobros y órdenes de venta del día</p>
+          <p className="text-gray-500 font-medium italic">Liquida servicios y gestiona ventas por sede</p>
         </div>
-
-        {/* Resumen rápido del día */}
-        <div className="flex gap-3">
-          {[
-            { label: 'Efectivo', value: dayTotals.efectivo, icon: <Banknote size={14} />, color: 'text-green-600 bg-green-50' },
-            { label: 'Tarjeta',  value: dayTotals.tarjeta,  icon: <CreditCard size={14} />, color: 'text-blue-600 bg-blue-50' },
-            { label: 'Yape',     value: dayTotals.yape,     icon: <Smartphone size={14} />, color: 'text-purple-600 bg-purple-50' },
-          ].map(({ label, value, icon, color }) => (
-            <div key={label} className={`flex items-center gap-2 px-4 py-2 rounded-xl ${color} font-bold text-sm`}>
-              {icon} {label}: S/ {value.toFixed(2)}
-            </div>
-          ))}
-          <div className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gray-900 text-white font-black text-sm">
-            Total: S/ {totalDay.toFixed(2)}
+        <div className="flex gap-4">
+          <div className="bg-white px-6 py-3 rounded-2xl shadow-sm border border-gray-100">
+            <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Caja Total del Día</p>
+            <p className="text-2xl font-black text-indigo-600 tracking-tighter">S/ {totalDay.toFixed(2)}</p>
           </div>
         </div>
-      </div>
+      </header>
 
-      {/* Filtro de fecha */}
-      <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 mb-6 flex gap-4 items-end">
-        <div>
-          <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5">Fecha</label>
-          <input
-            type="date" value={dateFilter}
-            onChange={e => setDateFilter(e.target.value)}
-            className="border border-gray-100 bg-gray-50 rounded-xl p-3 outline-none focus:ring-2 focus:ring-indigo-400 text-sm"
-          />
-        </div>
-        <button onClick={loadData} className="bg-gray-900 text-white px-6 py-3 rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-black transition">
-          <Search size={16} /> Actualizar
-        </button>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-1 mb-6 bg-gray-100 p-1 rounded-2xl w-fit">
-        {[
-          { key: 'pendientes', label: `Pendientes de cobro (${completed.length})` },
-          { key: 'ordenes',    label: `Órdenes del día (${orders.length})` },
-        ].map(t => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key as any)}
-            className={`px-5 py-2 rounded-xl text-sm font-bold transition ${tab === t.key ? 'bg-white shadow text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}
+      <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-gray-100 mb-8 grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+        <div className="space-y-2">
+          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Sede Actual</label>
+          <select 
+            disabled={authData?.role !== 'admin'}
+            value={selectedBranch} 
+            onChange={e => setSelectedBranch(e.target.value)}
+            className="w-full bg-gray-50 border-none rounded-xl p-3 font-bold text-gray-700 outline-none"
           >
-            {t.label}
-          </button>
-        ))}
+            {branches.map(b => <option key={b.branchId} value={b.branchId}>{b.name}</option>)}
+          </select>
+        </div>
+        <div className="space-y-2">
+          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1">Fecha de Operación</label>
+          <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="w-full bg-gray-50 border-none rounded-xl p-3 font-bold text-gray-700 outline-none" />
+        </div>
+        <div className="flex gap-1 bg-gray-100 p-1.5 rounded-2xl md:col-span-2">
+           <button onClick={() => setTab('pendientes')} className={`flex-1 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${tab === 'pendientes' ? 'bg-white shadow-sm text-indigo-600' : 'text-gray-400'}`}>Pendientes ({completed.length})</button>
+           <button onClick={() => setTab('ordenes')} className={`flex-1 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${tab === 'ordenes' ? 'bg-white shadow-sm text-indigo-600' : 'text-gray-400'}`}>Ventas ({orders.length})</button>
+        </div>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center py-20"><Loader2 className="animate-spin text-indigo-500" size={32} /></div>
-      ) : tab === 'pendientes' ? (
-
-        // ── TAB: Servicios pendientes de cobro ──────────────────────
+      {tab === 'pendientes' ? (
         <div className="space-y-4">
-          {/* Barra de acción cuando hay selección */}
           {selected.size > 0 && (
-            <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex items-center justify-between">
-              <p className="text-sm font-bold text-indigo-700">
-                {selected.size} servicio(s) seleccionado(s)
-              </p>
-              <div className="flex items-center gap-3">
-                <select
-                  value={docType}
-                  onChange={e => setDocType(e.target.value as any)}
-                  className="bg-white border border-indigo-200 rounded-xl px-3 py-2 text-sm font-bold text-indigo-700 outline-none"
-                >
-                  <option value="BOLETA">Boleta</option>
-                  <option value="FACTURA">Factura</option>
+            <div className="bg-indigo-600 p-6 rounded-[2rem] shadow-xl shadow-indigo-100 flex items-center justify-between text-white animate-in slide-in-from-top-4">
+              <div>
+                <p className="text-xs font-bold opacity-80 uppercase tracking-widest">Cobro Agrupado</p>
+                <p className="text-xl font-black">{selected.size} Servicios seleccionados</p>
+              </div>
+              <div className="flex items-center gap-4">
+                <select value={docType} onChange={e => setDocType(e.target.value as any)} className="bg-white/20 border-none rounded-xl px-4 py-3 text-sm font-black outline-none cursor-pointer">
+                  <option value="NOTA_VENTA" className="text-gray-800">Nota de Venta</option>
+                  <option value="BOLETA" className="text-gray-800">Boleta</option>
+                  <option value="FACTURA" className="text-gray-800">Factura</option>
                 </select>
-                <button
-                  onClick={handleCreateOrder}
-                  className="bg-indigo-600 text-white px-5 py-2 rounded-xl font-bold text-sm flex items-center gap-2 hover:bg-indigo-700 transition shadow-lg shadow-indigo-100"
-                >
-                  <Receipt size={16} /> Crear orden y cobrar
+                <button onClick={handleCreateOrder} className="bg-white text-indigo-600 px-8 py-3.5 rounded-xl font-black uppercase text-xs tracking-widest hover:bg-gray-100 transition-all active:scale-95 flex items-center gap-2">
+                   <Receipt size={18}/> Generar Orden
                 </button>
               </div>
             </div>
           )}
 
           {completed.length === 0 ? (
-            <div className="text-center py-20 text-gray-400">
-              <CheckCircle2 size={40} className="mx-auto mb-3 text-gray-200" />
-              <p className="font-medium">No hay servicios completados pendientes de cobro.</p>
-            </div>
+             <div className="bg-white rounded-[3rem] p-20 text-center border-2 border-dashed border-gray-100">
+                <CheckCircle2 size={64} className="mx-auto text-gray-100 mb-4" />
+                <p className="font-black text-gray-300 uppercase tracking-widest">No hay servicios pendientes</p>
+             </div>
           ) : (
-            completed.map((req: any) => (
-              <div
-                key={req.requestId}
-                onClick={() => toggleSelect(req.requestId)}
-                className={`bg-white rounded-2xl border p-5 cursor-pointer transition-all ${
-                  selected.has(req.requestId)
-                    ? 'border-indigo-400 shadow-md shadow-indigo-50 bg-indigo-50/30'
-                    : 'border-gray-100 hover:border-indigo-200'
-                }`}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-4">
-                    {/* Checkbox visual */}
-                    <div className={`mt-1 w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                      selected.has(req.requestId) ? 'border-indigo-500 bg-indigo-500' : 'border-gray-300'
-                    }`}>
-                      {selected.has(req.requestId) && <div className="w-2 h-2 bg-white rounded-full" />}
-                    </div>
-
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-bold text-gray-800">{req.clientName}</span>
-                        {req.branchName && (
-                          <span className="flex items-center gap-1 text-xs text-gray-400">
-                            <MapPin size={10} /> {req.branchName}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1 text-xs text-gray-500 mb-2">
-                        <Clock size={11} /> {req.timeSlot}
-                        <span className="mx-1">·</span>
-                        <span>{req.clientPhone}</span>
-                      </div>
-                      {req.items?.map((item: any, i: number) => (
-                        <div key={i} className="flex items-center gap-1 text-sm text-gray-600">
-                          <PawPrint size={12} className="text-gray-400" />
-                          <span className="font-medium">{item.memberName || item.petName}</span>
-                          <span className="text-gray-400">—</span>
-                          <span>{item.productName || item.description}</span>
-                          <span className="text-gray-400 ml-1">S/ {item.price?.toFixed(2)}</span>
-                        </div>
-                      ))}
+            completed.map((req) => (
+              <div key={req.requestId} onClick={() => toggleSelect(req.requestId)} className={`bg-white p-6 rounded-[2rem] border-2 transition-all cursor-pointer flex justify-between items-center ${selected.has(req.requestId) ? 'border-indigo-500 bg-indigo-50/30 shadow-lg shadow-indigo-100' : 'border-gray-100 hover:border-indigo-200'}`}>
+                <div className="flex items-center gap-6">
+                  <div className={`w-6 h-6 rounded-full border-4 transition-all ${selected.has(req.requestId) ? 'border-indigo-500 bg-indigo-500 shadow-[0_0_0_4px_rgba(99,102,241,0.2)]' : 'border-gray-200'}`} />
+                  <div>
+                    <p className="font-black text-gray-800 text-lg uppercase tracking-tight">{req.clientName}</p>
+                    <div className="flex gap-4 mt-1">
+                      <span className="flex items-center gap-1.5 text-[10px] font-black text-gray-400 uppercase tracking-widest"><Clock size={12}/> {req.timeSlot}</span>
+                      <span className="flex items-center gap-1.5 text-[10px] font-black text-indigo-400 uppercase tracking-widest"><PawPrint size={12}/> {req.items[0]?.petName}</span>
                     </div>
                   </div>
-                  <span className="font-black text-gray-900 text-lg">S/ {req.total?.toFixed(2)}</span>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-black text-gray-400 uppercase mb-1">Por cobrar</p>
+                  <p className="text-2xl font-black text-gray-900 tracking-tighter">S/ {req.totalAmount?.toFixed(2)}</p>
                 </div>
               </div>
             ))
           )}
         </div>
-
       ) : (
-
-        // ── TAB: Órdenes del día ──────────────────────────────────────
-        <div className="bg-white rounded-3xl border border-gray-100 shadow-sm overflow-hidden">
-          {orders.length === 0 ? (
-            <div className="text-center py-20 text-gray-400">
-              <Receipt size={40} className="mx-auto mb-3 text-gray-200" />
-              <p className="font-medium">No hay órdenes para esta fecha.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
-                  <tr>
-                    <th className="p-5">Documento</th>
-                    <th className="p-5">Cliente</th>
-                    <th className="p-5">Servicios</th>
-                    <th className="p-5 text-center">Pagos</th>
-                    <th className="p-5 text-center">Total</th>
-                    <th className="p-5 text-center">Estado</th>
-                    <th className="p-5 text-right">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {orders.map(order => (
-                    <tr key={order.orderId} className="hover:bg-gray-50/30 transition">
-                      <td className="p-5">
-                        <p className="font-mono text-xs text-indigo-600 font-bold">{order.documentNumber}</p>
-                        <p className="text-[10px] text-gray-400 uppercase">{order.documentType}</p>
-                      </td>
-                      <td className="p-5">
-                        <p className="font-bold text-gray-800">{order.clientName}</p>
-                        <p className="text-xs text-gray-400">{order.clientPhone}</p>
-                      </td>
-                      <td className="p-5">
-                        {order.items.map((item, i) => (
-                          <p key={i} className="text-xs text-gray-600">
-                            {item.memberName && <span className="text-gray-400">🐾 {item.memberName} — </span>}
-                            {item.description}
-                          </p>
-                        ))}
-                      </td>
-                      <td className="p-5 text-center">
-                        {order.payments.length > 0 ? (
-                          <div className="flex flex-col gap-1 items-center">
-                            {order.payments.map((p, i) => (
-                              <span key={i} className="flex items-center gap-1 text-xs font-bold text-gray-600">
-                                {METHOD_ICON[p.method]} S/ {p.amount.toFixed(2)}
-                              </span>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="text-xs text-gray-300">—</span>
-                        )}
-                      </td>
-                      <td className="p-5 text-center font-black text-gray-900">
-                        S/ {order.total.toFixed(2)}
-                      </td>
-                      <td className="p-5 text-center">
-                        <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${ORDER_STATUS_STYLE[order.status]}`}>
-                          {order.status}
-                        </span>
-                      </td>
-                      <td className="p-5 text-right">
-                        <div className="flex justify-end gap-2">
-                          {order.status === 'PENDIENTE' && (
-                            <>
-                              <button
-                                onClick={() => setPayModal({ open: true, order })}
-                                className="bg-green-500 hover:bg-green-600 text-white h-9 w-9 rounded-xl flex items-center justify-center transition shadow-md shadow-green-100"
-                                title="Cobrar"
-                              >
-                                <Receipt size={16} />
-                              </button>
-                              <button
-                                onClick={async () => {
-                                  if (!confirm('¿Anular esta orden?')) return;
-                                  await saleOrderService.cancel(order.orderId, 'Anulado por operador');
-                                  loadData();
-                                }}
-                                className="bg-red-100 hover:bg-red-200 text-red-500 h-9 w-9 rounded-xl flex items-center justify-center transition"
-                                title="Anular"
-                              >
-                                <XCircle size={16} />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div className="bg-white rounded-[3rem] shadow-xl border border-gray-100 overflow-hidden">
+          <table className="w-full text-left">
+            <thead className="bg-gray-50/50 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b">
+              <tr>
+                <th className="p-6">Documento</th>
+                <th className="p-6">Cliente</th>
+                <th className="p-6">Detalle</th>
+                <th className="p-6 text-center">Total</th>
+                <th className="p-6 text-center">Estado</th>
+                <th className="p-6 text-right">Acción</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {orders.map(order => (
+                <tr key={order.orderId} className="hover:bg-gray-50/50 transition-all group">
+                  <td className="p-6">
+                    <p className="font-black text-indigo-600 text-xs tracking-widest uppercase">{order.documentNumber || 'SIN NUM.'}</p>
+                    <p className="text-[9px] font-bold text-gray-400">{order.documentType}</p>
+                  </td>
+                  <td className="p-6">
+                    <p className="font-black text-gray-800 uppercase text-xs">{order.clientName}</p>
+                    <p className="text-[10px] font-bold text-gray-400">{order.clientPhone}</p>
+                  </td>
+                  <td className="p-6">
+                    {order.items.map((item, i) => (
+                      <p key={i} className="text-[10px] font-bold text-gray-500 uppercase tracking-tight">• {item.description}</p>
+                    ))}
+                  </td>
+                  <td className="p-6 text-center font-black text-gray-900 text-base">S/ {order.total.toFixed(2)}</td>
+                  <td className="p-6 text-center">
+                    <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase border ${ORDER_STATUS_STYLE[order.status]}`}>{order.status}</span>
+                  </td>
+                  <td className="p-6 text-right">
+                    {order.status === 'PENDIENTE' && (
+                      <button onClick={() => setPayModal({ open: true, order })} className="bg-emerald-500 text-white p-2.5 rounded-xl hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-100 active:scale-90"><Receipt size={18}/></button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
-      {/* Modal de pago */}
       {payModal.order && (
         <PaymentModal
           isOpen={payModal.open}
